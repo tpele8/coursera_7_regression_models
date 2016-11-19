@@ -1,0 +1,135 @@
+---
+title: "Analysis of MPG per Transmission Type"
+author: "Tyler Peterson"
+date: "11/18/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(datasets)
+library(corrplot)
+library(pander)
+attach(mtcars)
+```
+
+## Executive Summary
+Using the dataset mtcars from Motor Trend, the objective of this analysis is to examine the dataset and explore the relationship between a set of variables and miles per gallon (MPG) (outcome). In particular, we seek to answer the following two questions:
+
+  1.  “Is an automatic or manual transmission better for MPG”
+  2.  "Quantify the MPG difference between automatic and manual transmissions"
+
+```{r mtcars Data Pre-processing, echo = FALSE}
+mtcars$am <- factor(mtcars$am)
+levels(mtcars$am) <- c("Automatic", "Manual")
+```
+
+## Exploratory Data Analysis
+In the EDA step, we attempt to explore the data and understand what the data points are expressing about the dataset. Please refer to the appendix for a more in depth understanding of how we explored the data and established normality.
+
+We examine the expected values of the transmission types to see if they are significant.
+```{r EDA - Expected Values, echo = TRUE}
+# Determine the expected values (mean) of each transmission type
+transMean <- with(mtcars, tapply(mpg, am, FUN = mean))
+```      
+We calculate that the difference between mean automatic transmission mpg ratings and manual transmission mpg ratings is `r round((transMean[1] - transMean[2]), 4)`. We need to do a t-test to determine if this difference is significant enough to confidently state that automatic transmissions overall get less gas mileage than manual transmissions.  The null hypothesis of our t-test is that the mean values are the same, with the alternative hypothesis being that they are different.
+```{r EDA - T Tests, echo = TRUE}
+autoSub <- subset(mtcars, am == "Automatic")
+manualSub <- subset(mtcars, am == "Manual")
+amTTest <- t.test(autoSub$mpg, manualSub$mpg)
+```
+From the t-test, the resulting p-value is `r amTTest$p.value` with a confidence interval of `r c(amTTest$conf.int[1], amTTest$conf.int[2])`.  This confidence interval does not include 0, so we conclude from our initial assumptions that if the only thing we were measuring was mpg vs. transmission type, we can expect automatic transmissions to have a worse mpg rating than manual transmissions.
+
+## Fitting the Model
+As we look at the dataset, we see that there are many more independent variables than just the transmission type, and all of those can influence the mpg rating.  Please see the appendix for a correlation matrix that indicates how much each variable in the dataset influences the mpg rating.
+
+We now fit the model to validate and improve upon our assumptions.
+```{r Model Fit - Single Variable, echo = TRUE}
+fitNoIntercept <- lm(mpg ~ am - 1, data = mtcars)
+fitWithIntercept <- lm(mpg ~ am, data = mtcars)
+summary(fitNoIntercept)$coef
+```
+When we exclude the intercept from the model, we see that our conclusions about the expected value of automatic transmissions is validated - that the expected mpg rating of automatic transmissions is lower than the manual transmissions.  However, including the intercept in the model and checking the R-squared value, we calculate that this model only accounts for `r round(summary(fitWithIntercept)$r.squared, 4) * 100`% of the variation in the dataset.  A multivariate approach should get us a better representation of the dataset.
+```{r Model Fit - All Variables, echo = TRUE}
+fitAllVars <- lm(mpg ~ ., data = mtcars)
+str(summary(fitAllVars))
+```
+We will not display the results from running a linear regression using all variables, it is sufficient to say that from using all of the variables, the R-squared value grows to `r round(summary(fitAllVars)$r.squared, 4)`, but the p-values for the data are all fairly high and none of them represent a good t-score.  We will need to find the most descriptive variables that provide the best representation of the data. To do this, we use the step method in r where we step through 100 different linear models to find the best variables to use.
+```{r Model Fit - Best Fit, echo = TRUE}
+bestFit <- step(lm(data = mtcars, mpg ~ .), direction = "both", trace = 0, steps = 100)
+summary(bestFit)$coef
+```
+From using the step model, we see that using the wt, qsec, and am variables, we get an accurate linear model that represents roughly `r round(summary(bestFit)$r.squared, 2)*100`% of the data.  
+
+## Conclusion
+We compare our final multi-variate model to our initial single variate model using an ANOVA:
+```{r Model Fit - Best Fit Comparison, echo = TRUE}
+pander(anova(fitWithIntercept, bestFit))
+```
+
+From this test, we can see the p-value is sufficient to confidently reject the null hypothesis and conclude that the second model is superior.  Furthermore, if we do a side-by-side density plot of the residuals from the fit model and the data points in the original dataset, we can see that they have nearly the same distribution.
+
+```{r Model Fit - Residual and Datapoint Comparison, echo = FALSE}
+par(mfrow = c(1, 2))
+plot(density(resid(bestFit)), main = "Density of Residuals")
+abline(v = mean(resid(bestFit)), col = "red", lwd = 2)
+plot(density(mtcars$mpg), main = "Density of Datapoints")
+abline(v = mean(mtcars$mpg), col = "red", lwd = 2)
+```
+
+Therefore, we conclude that:
+
+  1.  The multi-variate linear regression model closely models the actual data points in the dataset
+  2.  There were other factors in the model that confounded the transmission selection and influenced it - namely the wt and qsec variables.
+  3.  From the multi-variate linear regression we can say that on average, a manual transmission gets about `r round(summary(bestFit)$coef[4], 2)` better mpg than automatic transmissions.
+\pagebreak
+
+# Apendix
+
+### Initial Assumpitions and Validation
+We examine the number of cars in the study compared to their respective transmissions and also check their respective expected values.
+
+```{r EDA1, echo = FALSE}
+par(mfrow = c(1, 2))
+plot(mtcars$am, xlab = "Transmissions studied", ylab = "Number of cars", col = c("green", "blue"))
+boxplot(mpg ~ am, data = mtcars, outline = TRUE, col = c("green", "blue"), xlab = "Transmission Type", 
+        ylab = "MPG")
+```
+
+From the histogram above, we can see that there are more automatic transmissions than manual transmissions in the study. This will likey skew any superficial suppositions we make about the data, thus requiring statistical testing to verify all assumptions.  Furthermore, from the boxplot, it appears that we can assume that cars with an automatic transmission overall have a lower MPG rating.  This confirms what we are attempting to determine.
+
+### Datset test for normality.
+
+```{r EDA2, echo = FALSE, fig.height = 3, fig.width = 7}
+par(mfrow = c(1, 2))
+plot(density(mtcars$mpg), xlab = "MPG", ylab = "Density", main = "Density plot of MPG")
+abline(v = mean(mtcars$mpg), col = "red", lwd = 2)
+qqnorm(mtcars$mpg)
+qqline(mtcars$mpg, col = "red", lwd = 2)
+```
+
+The density plot seems to indicate that the data is not quite normally distributed. There appear to be a few outliers around the 30 to 40 mpg range that is skewing the data.  Those data will need to be looked at closer to see if we can rule them out or remove them from the analysis altogether.
+We run the Shapiro-Wilk test for normality with the null hypothesis that the data is normallly distributed
+
+```{r EDA - normality test, echo = FALSE}
+swTest <- shapiro.test(mtcars$mpg)
+```
+The Shapiro-Wilk test produces a p-value of `r swTest$p.value` and we fail to reject the null hypothesis, but we created a QQ plot which gives us a good indication if the data follows a normal distribution.
+
+We can see from the QQ plot that the mpg data does not appear to be normally distributed.  Again, it appears that there are 3 or 4 cars in the 30+ mpg range that are skewing the data.  Indeed we see that the mtcars dataset has the following cars with a mpg rating greater than 30
+```{r EDA3, echo = FALSE}
+mtcars[mtcars$mpg >= 30, ]
+```
+We see that none of these have automatic transmissions.  We therefore conclude that we cannot remove any data points from this dataset and accept that the linear model will likely not be able to account for this variance.
+
+### Correlated Variables
+Correlation between the different variables can be shown as follows:
+```{r Appendix - Correlation Matrix, echo = TRUE, fig.height = 2, fig.width = 7}
+data(mtcars)
+mtcarsCor = t(as.data.frame(sort(cor(mtcars)[1,])[1:10]))
+rownames(mtcarsCor) <- c("mpg")
+corrplot(mtcarsCor, method = "number", 
+         title = "Correlation of MTCARS Variables to MPG", 
+         is.corr = FALSE, cl.pos = "n", mar = c(0,0,1,0))
+```
+
